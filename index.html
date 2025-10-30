@@ -1,0 +1,205 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>AI Legal Assistant</title>
+    
+    <!-- 1. Load Tailwind CSS for styling -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    
+    <!-- 2. Load pdf.js library to read PDF files -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/2.16.105/pdf.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/2.16.105/pdf.worker.min.js"></script>
+    
+    <style>
+        /* Custom styles for the file input */
+        input[type="file"]::file-selector-button {
+            background-color: #4f46e5;
+            color: white;
+            border: none;
+            padding: 0.5rem 1rem;
+            border-radius: 0.375rem;
+            cursor: pointer;
+            transition: background-color 0.2s;
+        }
+        input[type="file"]::file-selector-button:hover {
+            background-color: #4338ca;
+        }
+        /* Simple spinner animation */
+        @keyframes spin {
+            to { transform: rotate(360deg); }
+        }
+        .spinner {
+            border: 4px solid rgba(0, 0, 0, 0.1);
+            border-left-color: #4f46e5;
+            border-radius: 50%;
+            width: 2rem;
+            height: 2rem;
+            animation: spin 1s linear infinite;
+        }
+    </style>
+</head>
+
+<body class="bg-gray-100 font-sans antialiased">
+    <div class="container mx-auto p-4 md:p-8 min-h-screen flex flex-col items-center">
+        <!-- Header -->
+        <header class="text-center mb-8">
+            <h1 class="text-3xl md:text-4xl font-bold text-gray-900">AI Legal Assistant</h1>
+            <p class="text-lg text-gray-600 mt-2">Upload a legal document (PDF) to get a simple, plain-English summary.</p>
+        </header>
+
+        <!-- Main Application Card -->
+        <main class="w-full max-w-3xl bg-white rounded-lg shadow-lg p-6 md:p-8">
+            <!-- Upload Section -->
+            <div class="upload-section mb-6">
+                <label for="pdfUpload" class="block text-sm font-medium text-gray-700 mb-2">
+                    Choose your PDF file:
+                </label>
+                <input type="file" id="pdfUpload" accept=".pdf" class="block w-full text-sm text-gray-500 file:mr-4 file:py-2 file:px-4 file:rounded-lg file:border-0 file:text-sm file:font-semibold file:bg-indigo-600 file:text-white hover:file:bg-indigo-700 cursor-pointer border border-gray-300 rounded-lg p-2">
+            </div>
+
+            <!-- Button Section -->
+            <div class="text-center mb-6">
+                <button id="analyzeButton" class="w-full md:w-auto bg-indigo-600 text-white font-bold py-3 px-8 rounded-lg shadow-md hover:bg-indigo-700 transition duration-300 ease-in-out disabled:opacity-50 disabled:cursor-not-allowed">
+                    Analyze Document
+                </button>
+            </div>
+
+            <!-- Results Section -->
+            <div id="resultsSection">
+                <h2 class="text-2xl font-semibold text-gray-800 border-b pb-2 mb-4">
+                    Analysis
+                </h2>
+                
+                <!-- Loading Spinner -->
+                <div id="loader" class="text-center py-8 hidden">
+                    <div class="spinner mx-auto"></div>
+                    <p class="text-gray-600 mt-3">Analyzing your document... This may take a moment.</p>
+                </div>
+
+                <!-- Error Message -->
+                <div id="errorMessage" class="hidden p-4 bg-red-100 text-red-700 rounded-lg">
+                    <!-- Error content will be inserted here -->
+                </div>
+                
+                <!-- AI Output Area -->
+                <div id="resultsContent" class="prose prose-indigo max-w-none text-gray-700">
+                    <p class="text-gray-500">Your document analysis will appear here.</p>
+                </div>
+            </div>
+        </main>
+
+        <footer class="text-center text-gray-500 text-sm mt-8">
+            Powered by AI
+        </footer>
+    </div>
+
+    <script type="module">
+        // --- DOM Elements ---
+        const pdfUpload = document.getElementById('pdfUpload');
+        const analyzeButton = document.getElementById('analyzeButton');
+        const loader = document.getElementById('loader');
+        const resultsContent = document.getElementById('resultsContent');
+        const errorMessage = document.getElementById('errorMessage');
+
+        // PDF.js worker setup
+        if (window.pdfjsLib) {
+            window.pdfjsLib.GlobalWorkerOptions.workerSrc = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/2.16.105/pdf.worker.min.js';
+        } else {
+            console.error('pdf.js library not loaded.');
+            showError('Error: PDF processing library failed to load. Please refresh the page.');
+        }
+
+        analyzeButton.addEventListener('click', handleAnalysis);
+
+        async function handleAnalysis() {
+            const file = pdfUpload.files[0];
+
+            if (!file) { showError('Please select a PDF file first.'); return; }
+            if (file.type !== 'application/pdf') { showError('Invalid file type. Please upload a .pdf file.'); return; }
+
+            setLoading(true); hideError(); resultsContent.innerHTML = '';
+
+            try {
+                console.log('Extracting PDF text...');
+                const pdfText = await extractPdfText(file);
+                console.log('PDF text extracted, sending to server...');
+                const analysisResult = await callGeminiAPI(pdfText);
+                displayResults(analysisResult);
+            } catch (err) {
+                console.error('An error occurred:', err);
+                showError(`An error occurred during analysis: ${err.message || err}`);
+            } finally {
+                setLoading(false);
+            }
+        }
+
+        function extractPdfText(file) {
+            const fileReader = new FileReader();
+            return new Promise((resolve, reject) => {
+                fileReader.onload = async function() {
+                    try {
+                        const typedarray = new Uint8Array(this.result);
+                        const pdf = await window.pdfjsLib.getDocument({ data: typedarray }).promise;
+                        let fullText = '';
+                        for (let i = 1; i <= pdf.numPages; i++) {
+                            const page = await pdf.getPage(i);
+                            const textContent = await page.getTextContent();
+                            const pageText = textContent.items.map(item => item.str).join(' ');
+                            fullText += pageText + '\n\n';
+                        }
+                        resolve(fullText);
+                    } catch (error) {
+                        reject(new Error(`Failed to parse PDF: ${error.message}`));
+                    }
+                };
+                fileReader.onerror = () => reject(new Error('Failed to read the file.'));
+                fileReader.readAsArrayBuffer(file);
+            });
+        }
+
+        async function callGeminiAPI(pdfText) {
+            const API_URL = '/api/summarize';
+            const body = { text: pdfText };
+
+            const resp = await fetch(API_URL, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify(body)
+            });
+
+            if (!resp.ok) {
+                let errText = await resp.text();
+                try { errText = JSON.parse(errText).error || errText; } catch (e) {}
+                throw new Error(errText || `HTTP Error: ${resp.status}`);
+            }
+
+            const data = await resp.json();
+            if (data.error) throw new Error(data.error);
+            return data.summary;
+        }
+
+        function displayResults(text) {
+            let html = text
+                .replace(/^##\s*(.*)$/gm, '<h2 class="text-xl font-semibold mt-4 mb-2">$1</h2>')
+                .replace(/^###\s*(.*)$/gm, '<h3 class="text-lg font-semibold mt-3 mb-1">$1</h3>')
+                .replace(/\*\*(.*?)\*\*/g, '<strong>$1</strong>')
+                .replace(/\*(?!\*)(.*?)\*(?!\*)/g, '<em>$1</em>')
+                .replace(/^\*\s(.*)$/gm, '<li class="ml-4 list-disc">$1</li>')
+                .replace(/\n/g, '<br>');
+
+            html = html.replace(/Disclaimer: (.*)/, '<p class="mt-6 p-3 bg-gray-100 border-l-4 border-indigo-500 text-sm text-gray-700 rounded-r-lg"><strong>Disclaimer:</strong> $1</p>');
+            resultsContent.innerHTML = html;
+        }
+
+        function setLoading(isLoading) {
+            if (isLoading) { loader.classList.remove('hidden'); analyzeButton.disabled = true; analyzeButton.textContent = 'Analyzing...'; }
+            else { loader.classList.add('hidden'); analyzeButton.disabled = false; analyzeButton.textContent = 'Analyze Document'; }
+        }
+
+        function showError(message) { errorMessage.textContent = message; errorMessage.classList.remove('hidden'); }
+        function hideError() { errorMessage.classList.add('hidden'); }
+    </script>
+</body>
+</html>
