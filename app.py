@@ -1,4 +1,6 @@
 import os
+import sys
+import logging
 from typing import Optional
 
 from flask import Flask, request, jsonify, send_from_directory
@@ -21,7 +23,7 @@ def load_dotenv_file(path: str = ".env") -> None:
 
             if "=" not in line:
                 continue
-
+  
             key, val = line.split("=", 1)
             key = key.strip()
             val = val.strip()
@@ -76,6 +78,10 @@ def get_gemini_client(api_key: Optional[str] = None):
         return client
     except Exception as e:
         raise RuntimeError(f"Failed to initialize Gemini Client: {e}")
+
+
+# Configure simple logging for the server
+logging.basicConfig(level=logging.INFO, format='%(asctime)s %(levelname)s %(message)s')
 
 def summarize_document(client, document_text):
     """
@@ -138,6 +144,21 @@ Please analyze it according to your instructions.
 # --- Flask web server ---
 app = Flask(__name__, static_folder='.', static_url_path='')
 
+# Add CORS headers to all responses
+@app.after_request
+def add_cors_headers(response):
+    response.headers['Access-Control-Allow-Origin'] = '*'
+    response.headers['Access-Control-Allow-Methods'] = 'POST, GET, OPTIONS'
+    response.headers['Access-Control-Allow-Headers'] = 'Content-Type'
+    return response
+
+@app.route('/health')
+def health():
+    """Health check endpoint."""
+    return jsonify({
+        "status": "ok",
+        "mode": "mock" if os.environ.get('LEG_MODE') == 'mock' else "live"
+    })
 
 @app.route('/')
 def index():
@@ -151,12 +172,30 @@ def api_summarize():
     Expects JSON: { "text": "...extracted pdf text...", "apiKey": "optional_client_key" }
     If apiKey is provided it will be used for this request; otherwise the server uses GEMINI_API_KEY.
     """
-    data = request.get_json(force=True)
+    print("\n=== Received /api/summarize request ===")
+    
+    try:
+        data = request.get_json(force=True)
+    except Exception as e:
+        print(f"Error parsing JSON: {e}")
+        return jsonify({'error': 'Invalid JSON in request body'}), 400
+        
     if not data or 'text' not in data:
+        print("Error: Missing 'text' in request body")
         return jsonify({'error': 'Missing "text" in request body.'}), 400
+        
+    print(f"Received text length: {len(data['text'])} chars")
+    print(f"Text preview: {data['text'][:200]}...")
 
     text = data['text']
     api_key = data.get('apiKey')
+
+    # Log a short preview for debugging (do not log full documents in production)
+    try:
+        preview = (text[:200].replace('\n', ' ')) if isinstance(text, str) else ''
+        logging.info(f"POST /api/summarize received: text_length={len(text) if isinstance(text, str) else 'N/A'} apiKey_provided={bool(api_key)} preview='{preview}'")
+    except Exception:
+        logging.info("POST /api/summarize received (failed to create preview)")
 
     # Mock mode support
     if os.environ.get('LEG_MODE', '') == 'mock':
@@ -171,10 +210,24 @@ def api_summarize():
     return jsonify(result)
 
 
+@app.route('/health', methods=['GET'])
+def health_check():
+    """Simple health endpoint to confirm the app is running."""
+    return jsonify({'status': 'ok'}), 200
+
+
 if __name__ == '__main__':
     # Helpful startup message
-    print('Starting LegalEase AI server on http://127.0.0.1:5000')
     # Load .env if present for local dev
     load_dotenv_file('.env')
+
+    # Allow starting in mock mode with a simple CLI flag: `python app.py --mock`
+    if '--mock' in sys.argv:
+        os.environ['LEG_MODE'] = 'mock'
+        logging.info('Starting in MOCK mode (LEG_MODE=mock)')
+    else:
+        logging.info(f"LEG_MODE={os.environ.get('LEG_MODE','')} GEMINI_API_KEY_set={'GEMINI_API_KEY' in os.environ}")
+
+    print('Starting LegalEase AI server on http://127.0.0.1:5000')
     # Run Flask app
     app.run(host='0.0.0.0', port=5000, debug=True)
