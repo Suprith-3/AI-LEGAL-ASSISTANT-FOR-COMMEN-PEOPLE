@@ -1,3 +1,4 @@
+<<<<<<< HEAD
 LegalEase AI — local setup
 
 This small project uses Google Gemini (GenAI) via the `google-genai` SDK and expects an API key in the `GEMINI_API_KEY` environment variable.
@@ -85,3 +86,6 @@ python .\app.py
 ```
 
 If you'd like a CLI flag instead of an environment variable for mock mode, I can add that.
+=======
+# AI-LEGAL-ASSISTANT-FOR-COMMEN-PEOPLE
+>>>>>>> dfe5f6b35491fbec3a16b20f9caeb83ed3195f3d
